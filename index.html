@@ -53,12 +53,16 @@
       Es realizado por investigadores de la <b>Universidad Nacional de Quilmes (UNQ)</b> y la <b>Universidad Católica de Salta (UCASAL).</b></p>
 
       <h2>¿En qué consiste?</h2>
-      <p>Vas a escuchar <b>pares de sonidos</b> divididos en <b>3 bloques</b> de <b>16 ensayos cada uno</b> (12 experimentales + 4 de entrenamiento).<br>
+      <p>Vas a escuchar <b>pares de sonidos</b> divididos en <b>6 bloques en total</b>:<br>
+      - <b>3 bloques sobre distancia percibida</b>: 36 ensayos cada uno (30 experimentales + 6 de entrenamiento)<br>
+      - <b>3 bloques sobre intensidad percibida</b>: 12 ensayos cada uno (sin entrenamiento)<br>
       Entre cada bloque habrá un descanso de <b>30 segundos</b>.<br>
-      Duración total aproximada: <b>8 minutos</b>.</p>
+      Duración total aproximada: <b>22 minutos</b>.</p>
 
       <h2>¿Qué tenés que hacer?</h2>
-      <p>En cada ensayo escucharás dos sonidos (A y B). Deberás <b>elegir cuál de los dos sonidos está MÁS LEJOS</b>.<br>
+      <p>En cada ensayo escucharás dos sonidos (A y B).<br>
+      <b>Bloques de distancia</b>: elegir cuál de los dos sonidos está <b>MÁS LEJOS</b>.<br>
+      <b>Bloques de intensidad</b>: elegir cuál de los dos sonidos se percibe con <b>MAYOR INTENSIDAD</b>.<br>
 
         <h2>Requisitos</h2>
       <ul style="text-align:left; display:inline-block; margin-top: -8px;">
@@ -79,6 +83,7 @@
         <ul style="margin:8px 0 0 0;">
           <li><b>No uses el volumen para estimar la distancia.</b> El volumen varía al azar entre ensayos.</li>
           <li><b>Cada sonido se reproduce una sola vez.</b> Escucha con atención.</li>
+          <li>En los bloques de <b>intensidad</b>, responde según la percepción de intensidad, no según el volumen físico.</li>
           <li>Realiza el experimento en un lugar silencioso y sin distracciones.</li>
         </ul>
       </div>
@@ -222,7 +227,7 @@
       </div>
       
       <div style="margin-top:16px;">
-        <p style="font-size:18px; font-weight:600; margin:12px 0;">¿Cuál sonido está MÁS LEJOS?</p>
+        <p id="questionText" style="font-size:18px; font-weight:600; margin:12px 0;">¿Cuál sonido está MÁS LEJOS?</p>
       </div>
       
       <div style="margin-top:16px; display:flex; justify-content:center; gap:12px; flex-wrap:nowrap;">
@@ -230,7 +235,7 @@
         <button id="btnChoiceB" class="choice-button" disabled>B</button>
       </div>
       
-      <p style="font-size:12px; color:#aaa; margin-top:20px;">Recuerde no utilizar el volumen para estimar la distancia.</p>
+      <p style="font-size:12px; color:#aaa; margin-top:20px;">Escucha con atención y responde según tu percepción.</p>
       <p id="statusLine" class="small"></p>
     </div>
 
@@ -253,7 +258,7 @@
 
 <script>
 /* CONFIG */
-const ENDPOINT_URL = "https://script.google.com/macros/s/AKfycbwBC_AQh-EfGO8MwsER4vho7fUiw5OTCFXTMM2AkLWpCLrii7glvEOAyKuG5M0LHchT7A/exec";
+const ENDPOINT_URL = "https://script.google.com/macros/s/AKfycbyXceNYvK9fsIpxn_vpZw40rr21QylBpdXlj1wUZ6rMiNLiHxr1qCMTZl_OzT9bAwPG/exec";
 const SECRET_TOKEN = "PsychoTry_2";
 const VALIDATE_FILES = false;
 const BREAK_SECONDS = 30;
@@ -274,10 +279,12 @@ function getBlockOrder(participantId) {
   return BLOCK_PERMUTATIONS[permIndex];
 }
 
-function getBlockNumber(blockType) {
+function getBlockNumber(blockType, blockKind) {
   // Mapea flat -> 1, low -> 2, high -> 3
   const mapping = { 'flat': 1, 'low': 2, 'high': 3 };
-  return mapping[blockType] || 1;
+  const baseNum = mapping[blockType] || 1;
+  // Para bloques de intensidad, sumar 3
+  return blockKind === 'loudness' ? baseNum + 3 : baseNum;
 }
 
 /* RUNTIME STATE */
@@ -406,13 +413,13 @@ function sendSessionMetadata(pid, seed, blocks) {
 
 /* EXTRACT DISTANCE NUMBER FROM FILENAME */
 function extractDistance(filepath) {
-  // Extract distance number from pattern: _distN_
-  const match = filepath.match(/_dist(\d)_/);
+  // Extract distance number from pattern: _distN.wav (note: now without the underscore after N)
+  const match = filepath.match(/_dist(\d+)\.wav$/);
   return match ? parseInt(match[1], 10) : null;
 }
 
-/* GENERATE STIMULUS PAIRS */
-function generatePairs(stimuli, numPairs, isTraining = false, blockType = '', blockIndex = 0) {
+/* GENERATE STIMULUS PAIRS - New logic for systematic combinations */
+function generatePairs(stimuli, blockType = '', blockIndex = 0, blockKind = 'distance', repetitions = 5) {
   // Group stimuli by distance number
   const byDistance = {};
   for (const stim of stimuli) {
@@ -423,58 +430,89 @@ function generatePairs(stimuli, numPairs, isTraining = false, blockType = '', bl
   }
   
   const distances = Object.keys(byDistance).map(Number).sort();
-  const pairs = [];
+  console.log(`Block ${blockType}: Available distances: ${distances.join(', ')}`);
   
-  // Generate pairs ensuring different distance numbers
-  let attempts = 0;
-  const maxAttempts = numPairs * 100;
-  
-  while (pairs.length < numPairs && attempts < maxAttempts) {
-    attempts++;
-    
-    // Pick two different distances
-    const dist1 = distances[Math.floor(Math.random() * distances.length)];
-    let dist2 = distances[Math.floor(Math.random() * distances.length)];
-    
-    // Ensure different distances
-    if (dist1 === dist2) continue;
-    
-    // Pick random stimuli from each distance
-    const stims1 = byDistance[dist1];
-    const stims2 = byDistance[dist2];
-    
-    if (!stims1 || !stims2 || stims1.length === 0 || stims2.length === 0) continue;
-    
-    const stimA = stims1[Math.floor(Math.random() * stims1.length)];
-    const stimB = stims2[Math.floor(Math.random() * stims2.length)];
-    
-    // Create pair signature to avoid excessive repeats
-    const pairSig = [stimA.csvIndex, stimB.csvIndex].sort().join('|');
-    
-    // Allow up to 3 repeats of same combination
-    const existingCount = pairs.filter(p => {
-      const sig = [p.stimA.csvIndex, p.stimB.csvIndex].sort().join('|');
-      return sig === pairSig;
-    }).length;
-    
-    if (existingCount >= 3) continue;
-    
-    // Generate unique ID including block type and block index
-    const prefix = isTraining ? 'train' : 'exp';
-    const uniqueId = `${prefix}_${blockType}_${blockIndex}_${pairs.length}`;
-    
-    pairs.push({
-      stimA: stimA,
-      stimB: stimB,
-      id: uniqueId,
-      training: isTraining
-    });
+  // Generate all unique combinations: (1,2), (1,3), (1,4), (2,3), (2,4), (3,4)
+  const baseCombinations = [];
+  for (let i = 0; i < distances.length; i++) {
+    for (let j = i + 1; j < distances.length; j++) {
+      const dist1 = distances[i];
+      const dist2 = distances[j];
+      
+      // Get one stimulus from each distance
+      const stim1 = byDistance[dist1][0];
+      const stim2 = byDistance[dist2][0];
+      
+      if (stim1 && stim2) {
+        baseCombinations.push({
+          dist1: dist1,
+          dist2: dist2,
+          stim1: stim1,
+          stim2: stim2
+        });
+      }
+    }
   }
   
-  return shuffleCrypto(pairs);
+  console.log(`Block ${blockType} (${blockKind}): Generated ${baseCombinations.length} base combinations`);
+  
+  // Generate training pairs: only for distance blocks (6 total)
+  const trainingPairs = [];
+  if (blockKind === 'distance') {
+    for (let i = 0; i < baseCombinations.length; i++) {
+      const combo = baseCombinations[i];
+      
+      // Randomize order (sometimes A is smaller distance, sometimes B is smaller)
+      const flipOrder = Math.random() < 0.5;
+      const stimA = flipOrder ? combo.stim2 : combo.stim1;
+      const stimB = flipOrder ? combo.stim1 : combo.stim2;
+      
+      trainingPairs.push({
+        stimA: stimA,
+        stimB: stimB,
+        id: `train_${blockKind}_${blockType}_${blockIndex}_${i}`,
+        training: true,
+        blockKind: blockKind
+      });
+    }
+  }
+  
+  // Generate experimental pairs: each combination repeated N times
+  const experimentalPairs = [];
+  for (let rep = 0; rep < repetitions; rep++) {
+    for (let i = 0; i < baseCombinations.length; i++) {
+      const combo = baseCombinations[i];
+      
+      // Randomize order for each repetition
+      const flipOrder = Math.random() < 0.5;
+      const stimA = flipOrder ? combo.stim2 : combo.stim1;
+      const stimB = flipOrder ? combo.stim1 : combo.stim2;
+      
+      experimentalPairs.push({
+        stimA: stimA,
+        stimB: stimB,
+        id: `exp_${blockKind}_${blockType}_${blockIndex}_${rep}_${i}`,
+        training: false,
+        blockKind: blockKind
+      });
+    }
+  }
+  
+  // Randomize training pairs
+  const shuffledTraining = blockKind === 'distance' ? shuffleCrypto(trainingPairs) : [];
+  
+  // Randomize experimental pairs
+  const shuffledExperimental = shuffleCrypto(experimentalPairs);
+  
+  // Combine: training first (if any), then experimental
+  const allPairs = shuffledTraining.concat(shuffledExperimental);
+  
+  console.log(`Block ${blockType} (${blockKind}): ${shuffledTraining.length} training + ${shuffledExperimental.length} experimental = ${allPairs.length} total pairs`);
+  
+  return allPairs;
 }
 
-/* PREPARAR BLOQUES (modificado para generar pares) */
+/* PREPARAR BLOQUES (modificado para generar pares sistemáticos) */
 async function loadConditionsAndPrepareBlocks() {
   blocks = [];
   blockBuffer = [];
@@ -494,55 +532,66 @@ async function loadConditionsAndPrepareBlocks() {
     const groups = {};
     for (const obj of pathObjs) {
       const p = obj.path;
-      const m = p.match(/(flat|low|high)_dist(\d+)/i);
+      // Match pattern: pink_noise_{flat|low|high}_distN.wav
+      const m = p.match(/pink_noise_(flat|low|high)_dist(\d+)\.wav/i);
       if (m) {
         const type = m[1].toLowerCase();
-        //const dist = m[1].toLowerCase() + m[2];
-        const dist = `${m[1].toLowerCase()}_dist${m[2]}`;
-        groups[type] = groups[type] || {};
-        groups[type][dist] = groups[type][dist] || [];
-        groups[type][dist].push(obj);
-      } else {
-        const type = /flat/i.test(p) ? 'flat' : (/low/i.test(p) ? 'low' : (/high/i.test(p) ? 'high' : 'other'));
-        const dm = p.match(/(flat|low|high)_dist(\d+)/i);
-        const dist = dm ? dm[1].toLowerCase()+dm[2] : (type + '_0');
-        groups[type] = groups[type] || {};
-        groups[type][dist] = groups[type][dist] || [];
-        groups[type][dist].push(obj);
+        groups[type] = groups[type] || [];
+        groups[type].push(obj);
       }
     }
+
+    console.log('Grouped stimuli by type:', Object.keys(groups).map(k => `${k}: ${groups[k].length}`).join(', '));
 
     // Orden de los bloques: contrabalanceado según participant_id
     const blockOrder = getBlockOrder(participant_id);
     const prepared = [];
 
+    // Generate DISTANCE blocks (3 blocks with 5 repetitions + training)
     for (let blockIdx = 0; blockIdx < blockOrder.length; blockIdx++) {
       const type = blockOrder[blockIdx];
-      if (!groups[type]) continue;
+      if (!groups[type]) {
+        console.warn(`No stimuli found for block type: ${type}`);
+        continue;
+      }
       
       // Get all stimuli for this block type
-      const allStimuli = [].concat(...Object.values(groups[type]));
+      const allStimuli = groups[type];
       
-      // Generate 12 experimental pairs (using all stimuli)
-      const experimentalPairs = generatePairs(allStimuli, 12, false, type, blockIdx);
+      // Generate pairs for DISTANCE block (5 repetitions, with training)
+      const allPairs = generatePairs(allStimuli, type, blockIdx, 'distance', 5);
       
-      // Generate 4 training pairs (only with 0dB stimuli)
-      // Filter only 0dB stimuli from the current block
-      const stims0dB = allStimuli.filter(s => s.path.includes('roved_+00dB.wav'));
-      const trainingPairs = generatePairs(stims0dB, 4, true, type, blockIdx);
+      prepared.push({ type, items: allPairs, blockKind: 'distance' });
+      console.log(`Distance Block ${type}: ${allPairs.length} total pairs generated`);
+    }
+
+    // Generate LOUDNESS blocks (3 blocks with 2 repetitions, no training)
+    for (let blockIdx = 0; blockIdx < blockOrder.length; blockIdx++) {
+      const type = blockOrder[blockIdx];
+      if (!groups[type]) {
+        console.warn(`No stimuli found for block type: ${type}`);
+        continue;
+      }
       
-      // Combine: training first, then experimental
-      const allPairs = trainingPairs.concat(experimentalPairs);
+      // Get all stimuli for this block type
+      const allStimuli = groups[type];
       
-      prepared.push({ type, items: allPairs });
-      console.log(`Block ${type}: ${trainingPairs.length} training pairs + ${experimentalPairs.length} experimental pairs = ${allPairs.length} total`);
+      // Generate pairs for LOUDNESS block (2 repetitions, no training)
+      const allPairs = generatePairs(allStimuli, type, blockIdx + 3, 'loudness', 2);
+      
+      prepared.push({ type, items: allPairs, blockKind: 'loudness' });
+      console.log(`Loudness Block ${type}: ${allPairs.length} total pairs generated`);
     }
 
     blocks = prepared;
 
     blocks.forEach((b,bi) => {
-      console.group(`Block ${bi+1} (${b.type}) — ${b.items.length} pairs`);
-      b.items.forEach((it,i) => console.log(`  [${i+1}] ${it.training ? '(TRAINING)' : ''} A:${it.stimA.path} B:${it.stimB.path}`));
+      console.group(`Block ${bi+1} (${b.type}, ${b.blockKind}) — ${b.items.length} pairs`);
+      b.items.forEach((it,i) => {
+        const distA = extractDistance(it.stimA.path);
+        const distB = extractDistance(it.stimB.path);
+        console.log(`  [${i+1}] ${it.training ? '(TRAINING)' : ''} A:dist${distA} B:dist${distB} (${it.stimA.path.split('/').pop()} | ${it.stimB.path.split('/').pop()})`);
+      });
       console.groupEnd();
     });
 
@@ -786,8 +835,11 @@ function showBlockScreen() {
   document.getElementById('breakScreen').classList.add('hidden');
   document.getElementById('endScreen').classList.add('hidden');
 
-  document.getElementById('blockTitle').textContent = `Bloque ${blockIndex+1}`;
-  document.getElementById('blockInfo').textContent = `Este bloque contiene ${blocks[blockIndex] ? blocks[blockIndex].items.length : 0} ensayos.`;
+  const currentBlock = blocks[blockIndex];
+  const blockKind = currentBlock ? currentBlock.blockKind : 'distance';
+  const blockKindText = blockKind === 'distance' ? 'Distancia Percibida' : 'Intensidad Percibida';
+  document.getElementById('blockTitle').textContent = `Bloque ${blockIndex+1}: ${blockKindText}`;
+  document.getElementById('blockInfo').textContent = `Este bloque contiene ${currentBlock ? currentBlock.items.length : 0} ensayos.`;
   document.getElementById('btnStartBlock').disabled = false;
 }
 
@@ -851,6 +903,7 @@ async function nextTrial() {
   // Process previous trial response
   if (withinIndex >= 0 && withinIndex < currentBlockItems.length && currentTrial && currentTrial.userChoice) {
     const prev = currentBlockItems[withinIndex];
+    const currentBlockKind = blocks[blockIndex].blockKind;
     
     // no encolar respuestas de training
     if (!prev.training) {
@@ -858,27 +911,37 @@ async function nextTrial() {
       if (!blockQueuedIds.has(uniqueId) && !globalSentIds.has(uniqueId)) {
         const distA = extractDistance(prev.stimA.path);
         const distB = extractDistance(prev.stimB.path);
-        const correct = (currentTrial.userChoice === 'A' && distA > distB) || 
-                       (currentTrial.userChoice === 'B' && distB > distA);
+        
+        // Para bloques de DISTANCIA: mayor distancia = más lejos (correcto)
+        // Para bloques de INTENSIDAD: menor distancia = mayor intensidad (correcto)
+        let correct;
+        if (currentBlockKind === 'distance') {
+          correct = (currentTrial.userChoice === 'A' && distA > distB) || 
+                   (currentTrial.userChoice === 'B' && distB > distA);
+        } else { // loudness
+          correct = (currentTrial.userChoice === 'A' && distA < distB) || 
+                   (currentTrial.userChoice === 'B' && distB < distA);
+        }
         
         const payload = {
           token: SECRET_TOKEN,
           participant_id: participant_id,
           event_type: 'response',
           trial_index: prev.id,
-          block: getBlockNumber(blocks[blockIndex].type),
+          block: getBlockNumber(blocks[blockIndex].type, currentBlockKind),
           stim_A: prev.stimA.path,
           stim_B: prev.stimB.path,
           choice: currentTrial.userChoice,
           correct: correct ? 'True' : 'False',
           rt_ms: currentTrial.rt_ms,
           condition: blocks[blockIndex].type,
+          block_kind: currentBlockKind,
           timestamp: new Date().toISOString(),
           extra: JSON.stringify({ distA: distA, distB: distB })
         };
         blockBuffer.push(payload);
         blockQueuedIds.add(uniqueId);
-        console.log('Encolada respuesta para trial:', uniqueId, 'pair:', `${prev.stimA.csvIndex}|${prev.stimB.csvIndex}`, 'correct:', correct);
+        console.log('Encolada respuesta para trial:', uniqueId, 'pair:', `${prev.stimA.csvIndex}|${prev.stimB.csvIndex}`, 'correct:', correct, 'kind:', currentBlockKind);
       } else {
         console.log('Prev already queued or sent, skipping:', uniqueId);
       }
@@ -935,9 +998,18 @@ async function presentPair() {
   const audioA = document.getElementById('audioPlayerA');
   const audioB = document.getElementById('audioPlayerB');
   const status = document.getElementById('statusLine');
+  const questionText = document.getElementById('questionText');
   
   const pair = currentBlockItems[withinIndex];
   currentTrial = { pair: pair, userChoice: null, rt_ms: 0 };
+  
+  // Update question based on block kind
+  const currentBlockKind = blocks[blockIndex].blockKind;
+  if (currentBlockKind === 'distance') {
+    questionText.textContent = '¿Cuál sonido está MÁS LEJOS?';
+  } else {
+    questionText.textContent = '¿Cuál sonido se percibe con MAYOR INTENSIDAD?';
+  }
   
   // Update progress bar
   const progressPercentage = ((withinIndex + 1) / currentBlockItems.length) * 100;
